@@ -24,7 +24,6 @@ from transformers import AutoFeatureExtractor
 
 import pdb
 
-
 # load safety model
 safety_model_id = "CompVis/stable-diffusion-safety-checker"
 safety_feature_extractor = AutoFeatureExtractor.from_pretrained(safety_model_id)
@@ -319,6 +318,7 @@ def main():
     seed_everything(opt.seed)
 
     config = OmegaConf.load(f"{opt.config}")
+
     model = load_model_from_config(config, f"{opt.ckpt}")
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -422,7 +422,7 @@ def main():
         # mask = torch.ones_like(org_image) # no mask
         
         mask = mask[:, 0, :, :].unsqueeze(dim=0)
-        # Forward measurement model (Ax + n)
+        # Forward measurement model (Ax + n)sh run/inverse_bip.sh
         y = operator.forward(org_image, mask=mask)
         y_n = noiser(y)
 
@@ -430,7 +430,18 @@ def main():
         # Forward measurement model (Ax + n)
         y = operator.forward(org_image)
         y_n = noiser(y)
+        
         mask = None
+
+    if y_n.shape == org_image.shape:
+        input_image = torch.clamp((y_n+1.0)/2.0, min=0.0, max=1.0)
+        input_image = input_image.cpu().numpy()
+        input_image = input_image.transpose(0,2,3,1)[0]*255
+        Image.fromarray(input_image.astype(np.uint8)).save(os.path.join(sample_path, f"{base_count:05}_input.png"))
+        base_count += 1
+
+
+    
     
 
     #########################################################
@@ -503,21 +514,22 @@ def main():
                     
                     if not opt.skip_save:
                         for x_sample in x_checked_image_torch:
+                            image = torch.clamp((org_image+1.0)/2.0, min=0.0, max=1.0)
+                            image = image.cpu().numpy()
                             if opt.inpainting:  # Inpainting gluing logic as in SD inpaint.py
-                                image = torch.clamp((org_image+1.0)/2.0, min=0.0, max=1.0)
-                                image = image.cpu().numpy()
-
                                 mask = mask.cpu().numpy()
-                                
                                 inpainted = mask*image+(1-mask)*x_sample.cpu().numpy()
                                 inpainted = inpainted.transpose(0,2,3,1)[0]*255
                                 Image.fromarray(inpainted.astype(np.uint8)).save(os.path.join(sample_path, f"{base_count:05}.png"))
                             else:
+
                                 x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
                                 img = Image.fromarray(x_sample.astype(np.uint8))
                                 # img = put_watermark(img, wm_encoder)
                                 img.save(os.path.join(sample_path, f"temp_{base_count:05}.png"))
 
+                            truth = image.transpose(0,2,3,1)[0]*255
+                            Image.fromarray(truth.astype(np.uint8)).save(os.path.join(sample_path, f"{base_count:05}_truth.png"))
                             base_count += 1
 
                     if not opt.skip_grid:
