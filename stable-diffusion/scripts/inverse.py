@@ -13,9 +13,11 @@ import time
 from pytorch_lightning import seed_everything
 from torch import autocast
 from contextlib import contextmanager, nullcontext
+import lpips
 
 from ldm.util import instantiate_from_config
 from ldm.models.diffusion.psld import DDIMSampler
+from ldm.models.diffusion.psld2 import DDIMSampler2nd
 from ldm.models.diffusion.plms import PLMSSampler
 from ldm.models.diffusion.dpm_solver import DPMSolverSampler
 
@@ -138,6 +140,11 @@ def main():
         "--dpm_solver",
         action='store_true',
         help="use dpm_solver sampling",
+    )
+    parser.add_argument(
+        "--DDIM_second_order",
+        action='store_true',
+        help="use second order DDIM sampling",
     )
     parser.add_argument(
         "--laion400m",
@@ -328,6 +335,8 @@ def main():
         sampler = DPMSolverSampler(model)
     elif opt.plms:
         sampler = PLMSSampler(model)
+    elif opt.DDIM_second_order:
+        sampler = DDIMSampler2nd(model)
     else:
         # pdb.set_trace()
         sampler = DDIMSampler(model)
@@ -435,10 +444,10 @@ def main():
 
     if y_n.shape == org_image.shape:
         input_image = torch.clamp((y_n+1.0)/2.0, min=0.0, max=1.0)
-        input_image = input_image.cpu().numpy()
+        input_image = input_image.cpu().detach().numpy()
         input_image = input_image.transpose(0,2,3,1)[0]*255
         Image.fromarray(input_image.astype(np.uint8)).save(os.path.join(sample_path, f"{base_count:05}_input.png"))
-        base_count += 1
+        #base_count += 1
 
 
     
@@ -513,24 +522,33 @@ def main():
                     
                     
                     if not opt.skip_save:
+                        loss_fn_alex = lpips.LPIPS(net='alex')
                         for x_sample in x_checked_image_torch:
                             image = torch.clamp((org_image+1.0)/2.0, min=0.0, max=1.0)
                             image = image.cpu().numpy()
+                            
                             if opt.inpainting:  # Inpainting gluing logic as in SD inpaint.py
                                 mask = mask.cpu().numpy()
                                 inpainted = mask*image+(1-mask)*x_sample.cpu().numpy()
+                                print("LPIPS", loss_fn_alex(torch.from_numpy(image[0]), torch.from_numpy(inpainted)))
                                 inpainted = inpainted.transpose(0,2,3,1)[0]*255
                                 Image.fromarray(inpainted.astype(np.uint8)).save(os.path.join(sample_path, f"{base_count:05}.png"))
+                                
                             else:
-
-                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+                                print(type(x_sample))
+                                print("LPIPS", loss_fn_alex(torch.from_numpy(image[0]), x_sample.cpu()))
+                                x_sample = x_sample.cpu().numpy()
+                                x_sample = 255. * rearrange(x_sample, 'c h w -> h w c')
                                 img = Image.fromarray(x_sample.astype(np.uint8))
                                 # img = put_watermark(img, wm_encoder)
-                                img.save(os.path.join(sample_path, f"temp_{base_count:05}.png"))
+                                img.save(os.path.join(sample_path, f"{base_count:05}.png"))
+                                
+                            
+
 
                             truth = image.transpose(0,2,3,1)[0]*255
                             Image.fromarray(truth.astype(np.uint8)).save(os.path.join(sample_path, f"{base_count:05}_truth.png"))
-                            base_count += 1
+                            #base_count += 1
 
                     if not opt.skip_grid:
                         all_samples.append(x_checked_image_torch)
@@ -544,7 +562,7 @@ def main():
                                 img = Image.fromarray(x_sample.astype(np.uint8))
                                 # img = put_watermark(img, wm_encoder)
                                 img.save(os.path.join(sample_path, f"{base_count:05}_low_res.png"))
-                                base_count += 1
+                                #base_count += 1
 
                         
 
